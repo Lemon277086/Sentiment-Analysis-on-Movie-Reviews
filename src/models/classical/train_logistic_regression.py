@@ -11,6 +11,7 @@ Linear SVC / Random Forest）请参照本文件结构实现：
 运行示例：
     python src/models/classical/train_logistic_regression.py --exp_name base
     python src/models/classical/train_logistic_regression.py --C 0.5 --exp_name C0.5
+    python src/models/classical/train_logistic_regression.py --text_field phrase --exp_name phrase_only
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.experiment import ExperimentLogger
-from common.preprocess import prepare_dataframe
+from common.preprocess import combine_phrase_and_sentence, prepare_dataframe
 from common.split import ensure_split
 from common.utils import ensure_dirs, load_data, set_seed
 from evaluation.evaluate import evaluate_predictions
@@ -42,10 +43,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--C", type=float, default=1.0, help="正则化强度的倒数")
-    parser.add_argument("--max_features", type=int, default=50000, help="TF-IDF 最大特征数")
+    parser.add_argument("--max_features", type=int, default=100000, help="TF-IDF 最大特征数")
     parser.add_argument("--ngram_min", type=int, default=1)
     parser.add_argument("--ngram_max", type=int, default=2)
     parser.add_argument("--min_df", type=int, default=2, help="最小文档频率")
+    parser.add_argument("--text_field", type=str, default="phrase",
+                        choices=("phrase", "phrase_sentence"),
+                        help="特征文本：phrase=仅短语（真实数据上更优）；"
+                             "phrase_sentence=拼接句子上下文，用作消融对照")
     parser.add_argument("--max_samples", type=int, default=0, help="调试用：>0 时只抽取训练子集")
     return parser.parse_args()
 
@@ -59,12 +64,20 @@ def main() -> None:
     train_df, test_df = load_data()
     train_df = prepare_dataframe(train_df)      # 统一文本清洗
     test_df = prepare_dataframe(test_df)
+    if args.text_field == "phrase_sentence":
+        # 消融对照：同句短语共享相同的句子上下文（无泄漏，但真实数据上弱于纯短语）
+        train_df = combine_phrase_and_sentence(train_df)
+        test_df = combine_phrase_and_sentence(test_df)
+        text_col = "phrase_sentence_text"
+    else:
+        text_col = "Phrase"
     train_part, val_part = ensure_split(train_df, mode=args.mode,
                                         val_ratio=args.val_ratio, seed=args.seed)
     if args.max_samples > 0:
         train_part = train_part.sample(n=min(args.max_samples, len(train_part)),
                                        random_state=args.seed).reset_index(drop=True)
-    print(f"[数据] train={len(train_part)}  val={len(val_part)}  test={len(test_df)}")
+    print(f"[数据] train={len(train_part)}  val={len(val_part)}  test={len(test_df)}  "
+          f"特征文本={text_col}")
 
     logger = ExperimentLogger(family="classical", model="logistic_regression",
                               exp_name=args.exp_name, params=vars(args),
@@ -74,9 +87,10 @@ def main() -> None:
     # -------------------------------------------------- 特征与训练
     t0 = time.time()
     vectorizer = TfidfVectorizer(ngram_range=(args.ngram_min, args.ngram_max),
-                                 max_features=args.max_features, min_df=args.min_df)
-    x_train = vectorizer.fit_transform(train_part["Phrase"])
-    x_val = vectorizer.transform(val_part["Phrase"])
+                                 max_features=args.max_features, min_df=args.min_df,
+                                 sublinear_tf=True)
+    x_train = vectorizer.fit_transform(train_part[text_col])
+    x_val = vectorizer.transform(val_part[text_col])
 
     model = LogisticRegression(C=args.C, max_iter=1000)
     model.fit(x_train, train_part["Sentiment"])
@@ -89,7 +103,7 @@ def main() -> None:
     logger.save_metrics(metrics)
     logger.save_predictions(val_part["PhraseId"], val_part["Sentiment"], val_pred)
 
-    test_pred = model.predict(vectorizer.transform(test_df["Phrase"]))
+    test_pred = model.predict(vectorizer.transform(test_df[text_col]))
     logger.save_submission(test_df["PhraseId"], test_pred)
     logger.print_summary(metrics)
 
