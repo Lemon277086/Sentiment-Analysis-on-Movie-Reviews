@@ -4,7 +4,7 @@
 
 1. 从 common.split.ensure_split 获取统一训练/验证划分（不要自己切分！）
 2. 用 common.experiment.ExperimentLogger 落盘实验产物（契约见该文件 docstring）
-3. 用 evaluation.evaluate.evaluate_predictions 计算统一指标
+3. 用 common.metrics.evaluate_predictions 计算统一指标
 4. 生成 Kaggle 提交文件 submission.csv
 
 ComplementNB 是 MultinomialNB 的不平衡变体：本数据集极端情感（0/4）样本
@@ -35,7 +35,7 @@ from common.experiment import ExperimentLogger
 from common.preprocess import combine_phrase_and_sentence, prepare_dataframe
 from common.split import ensure_split
 from common.utils import ensure_dirs, load_data, set_seed
-from evaluation.evaluate import evaluate_predictions
+from common.metrics import evaluate_predictions
 
 
 def parse_args() -> argparse.Namespace:

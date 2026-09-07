@@ -50,15 +50,21 @@ class Vocab:
 
 
 class BatchIterator:
-    """手写小批迭代器：每轮重新打乱样本顺序，产出 (ids, labels) 张量。"""
+    """手写小批迭代器：每轮重新打乱样本顺序，产出 (ids, labels) 张量。
+
+    传入 ``context_ids`` 时产出 (phrase_ids, context_ids, labels) 三元组，
+    供上下文融合模型使用。
+    """
 
     def __init__(self, ids: np.ndarray, labels: np.ndarray, batch_size: int,
-                 shuffle: bool = True, seed: int = 42) -> None:
+                 shuffle: bool = True, seed: int = 42,
+                 context_ids: np.ndarray | None = None) -> None:
         self.ids = ids
         self.labels = labels
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.rng = np.random.default_rng(seed)
+        self.context_ids = context_ids
 
     def __len__(self) -> int:
         return ceil(len(self.ids) / self.batch_size)
@@ -68,7 +74,17 @@ class BatchIterator:
         order = self.rng.permutation(n) if self.shuffle else np.arange(n)
         for start in range(0, n, self.batch_size):
             index = order[start:start + self.batch_size]
-            yield (
-                torch.from_numpy(self.ids[index]),
-                torch.from_numpy(self.labels[index]),
-            )
+            xb = self.ids[index]
+            # 工程优化：批内动态长度。截去批内全为 PAD 的尾部时间步，
+            # LSTM/卷积只需处理批内最长序列（下限 12，保证短于最大卷积核的
+            # 极短批不致维度不足）。短语平均仅约 7 词，相对固定 48 步可省
+            # 大量无效时间步。LSTM 第 t 步输出只依赖前 t 步，截断不影响
+            # 有效位置的表示。
+            max_len = max(int((xb != PAD_ID).sum(axis=1).max()), 12)
+            batch = [torch.from_numpy(np.ascontiguousarray(xb[:, :max_len]))]
+            if self.context_ids is not None:
+                xc = self.context_ids[index]
+                c_len = max(int((xc != PAD_ID).sum(axis=1).max()), 12)
+                batch.append(torch.from_numpy(np.ascontiguousarray(xc[:, :c_len])))
+            batch.append(torch.from_numpy(self.labels[index]))
+            yield tuple(batch)
