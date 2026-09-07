@@ -15,8 +15,9 @@
                 textcnn/base、bilstm/base、bert/base
     nn_compare  BiLSTM 手写实现 vs nn.LSTM 库实现（同构对照）          约 1 分钟
                 bilstm/base_nn
-    grouped     句级分组划分对照（无泄漏指标，防泄漏分析用）           约 10 分钟
-                textcnn/base_grouped、bilstm/base_grouped
+    grouped     句级分组划分对照（无泄漏指标，防泄漏分析用）           约 11 分钟
+                textcnn/base_grouped、bilstm/base_grouped、
+                logistic_regression/base_grouped、multinomial_nb/base_grouped
     context     BERT 句对上下文融合 (完整句子, 短语)（自主改进实验）   约 20 分钟
                 bert/ctx
 
@@ -36,7 +37,9 @@
   已完成部分；中途 Ctrl+C 中断后，直接重跑同一条命令即可从断点继续。
 - 单独调试某个模型时可直接运行训练脚本，各训练脚本的 docstring 里有
   该模型的完整参数示例（如 train_bilstm.py / train_bert.py）。
-- 队友的经典模型（src/models/classical/）无编排组，单独运行，例如：
+- 经典模型（src/models/classical/）的 base 正式结果与 base_grouped 对照均无独立
+  编排组（base 含超参扫描由负责人单独运行），grouped 对照已并入上表 grouped 组；
+  也可单独运行，例如：
   python src/models/classical/train_linear_svc.py --exp_name base
   结果同样按契约落盘，会被 make_figures 自动并入汇总表和图表。
 """
@@ -66,6 +69,11 @@ GROUPS: dict[str, list[tuple[str, str, str, str]]] = {
         # 防泄漏对照。BERT 版已裁撤（省 25 分钟），两项已完成的数据足够支撑泄漏分析
         ("dl", "textcnn", "base_grouped", "src/models/deep_learning/train_textcnn.py --exp_name base_grouped --mode grouped"),
         ("dl", "bilstm", "base_grouped", "src/models/deep_learning/train_bilstm.py --exp_name base_grouped --mode grouped"),
+        # 经典模型对照（秒级/半分钟级，成本可忽略）
+        ("classical", "logistic_regression", "base_grouped",
+         "src/models/classical/train_logistic_regression.py --exp_name base_grouped --mode grouped"),
+        ("classical", "multinomial_nb", "base_grouped",
+         "src/models/classical/train_multinomial_nb.py --exp_name base_grouped --mode grouped"),
     ],
     "context": [
         # 上下文融合（自主改进）：BERT 句对输入 (完整句子, 短语)，交叉注意力
