@@ -6,7 +6,7 @@
 2. 用 common.experiment.ExperimentLogger 落盘实验产物（契约见该文件 docstring）
 3. 用 common.metrics.evaluate_predictions 计算统一指标
 4. 生成 Kaggle 提交文件 submission.csv
-
+ 
 ComplementNB 是 MultinomialNB 的不平衡变体：本数据集极端情感（0/4）样本
 远少于中性（2），ComplementNB 通常对稀少类的 macro-F1 更好。
 
@@ -23,6 +23,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.naive_bayes import ComplementNB, MultinomialNB
@@ -97,13 +98,15 @@ def main() -> None:
     t0 = time.time()
     if args.vectorizer == "counts":
         vectorizer = CountVectorizer(ngram_range=(args.ngram_min, args.ngram_max),
-                                     max_features=args.max_features, min_df=args.min_df)
+                                     max_features=args.max_features, min_df=args.min_df,
+                                     dtype=np.float32)
     else:
         vectorizer = TfidfVectorizer(ngram_range=(args.ngram_min, args.ngram_max),
                                      max_features=args.max_features, min_df=args.min_df,
-                                     sublinear_tf=True)
+                                     sublinear_tf=True, dtype=np.float32)
     x_train = vectorizer.fit_transform(train_part[text_col])
     x_val = vectorizer.transform(val_part[text_col])
+    x_test = vectorizer.transform(test_df[text_col])
 
     nb_cls = MultinomialNB if args.variant == "multinomial" else ComplementNB
     model = nb_cls(alpha=args.alpha)
@@ -116,8 +119,10 @@ def main() -> None:
     metrics.update({"train_seconds": train_seconds})
     logger.save_metrics(metrics)
     logger.save_predictions(val_part["PhraseId"], val_part["Sentiment"], val_pred)
+    # 保存概率矩阵供 scripts/ensemble.py 概率平均集成（列顺序 = model.classes_ = [0..4]）
+    logger.save_probs(model.predict_proba(x_val), model.predict_proba(x_test))
 
-    test_pred = model.predict(vectorizer.transform(test_df[text_col]))
+    test_pred = model.predict(x_test)
     logger.save_submission(test_df["PhraseId"], test_pred)
     logger.print_summary(metrics)
 

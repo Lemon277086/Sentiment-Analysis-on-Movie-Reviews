@@ -12,6 +12,7 @@ Linear SVC / Random Forest）请参照本文件结构实现：
     python src/models/classical/train_logistic_regression.py --exp_name base
     python src/models/classical/train_logistic_regression.py --C 0.5 --exp_name C0.5
     python src/models/classical/train_logistic_regression.py --text_field phrase --exp_name phrase_only
+    python src/models/classical/train_logistic_regression.py --class_weight balanced --exp_name cw
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -42,7 +44,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", type=str, default="stratified", choices=("stratified", "grouped"))
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--C", type=float, default=1.0, help="正则化强度的倒数")
+    parser.add_argument("--C", type=float, default=4.0,
+                        help="正则化强度的倒数；网格 {0.5,1,2,4,8} 实测 acc 峰值在 4.0")
+    parser.add_argument("--class_weight", type=str, default="none", choices=("none", "balanced"),
+                        help="balanced=按类频率倒数加权，通常提升 macro-F1 但 accuracy 可能略降")
     parser.add_argument("--max_features", type=int, default=100000, help="TF-IDF 最大特征数")
     parser.add_argument("--ngram_min", type=int, default=1)
     parser.add_argument("--ngram_max", type=int, default=2)
@@ -88,11 +93,13 @@ def main() -> None:
     t0 = time.time()
     vectorizer = TfidfVectorizer(ngram_range=(args.ngram_min, args.ngram_max),
                                  max_features=args.max_features, min_df=args.min_df,
-                                 sublinear_tf=True)
+                                 sublinear_tf=True, dtype=np.float32)
     x_train = vectorizer.fit_transform(train_part[text_col])
     x_val = vectorizer.transform(val_part[text_col])
+    x_test = vectorizer.transform(test_df[text_col])
 
-    model = LogisticRegression(C=args.C, max_iter=1000)
+    model = LogisticRegression(C=args.C, max_iter=1000,
+                               class_weight=None if args.class_weight == "none" else "balanced")
     model.fit(x_train, train_part["Sentiment"])
     train_seconds = round(time.time() - t0, 1)
 
@@ -102,8 +109,10 @@ def main() -> None:
     metrics.update({"train_seconds": train_seconds})
     logger.save_metrics(metrics)
     logger.save_predictions(val_part["PhraseId"], val_part["Sentiment"], val_pred)
+    # 保存概率矩阵供 scripts/ensemble.py 概率平均集成（列顺序 = model.classes_ = [0..4]）
+    logger.save_probs(model.predict_proba(x_val), model.predict_proba(x_test))
 
-    test_pred = model.predict(vectorizer.transform(test_df[text_col]))
+    test_pred = model.predict(x_test)
     logger.save_submission(test_df["PhraseId"], test_pred)
     logger.print_summary(metrics)
 
